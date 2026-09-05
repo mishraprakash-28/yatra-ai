@@ -1,463 +1,676 @@
 import os
-import requests
-import streamlit as st
-import folium
-from streamlit_folium import st_folium
+import math
+import json
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+
+try:
+    import streamlit as st  # pyright: ignore[reportMissingImports]
+except ModuleNotFoundError:  # pragma: no cover - helps IDE/static analysis when dependency is not installed
+    class _StreamlitFallback:
+        def __getattr__(self, name):
+            raise ModuleNotFoundError("streamlit is required to run this app")
+
+    st = _StreamlitFallback()
+
+import folium  # pyright: ignore[reportMissingImports]
+
+try:
+    import importlib
+
+    st_folium = importlib.import_module("streamlit_folium").st_folium
+except ModuleNotFoundError:  # pragma: no cover - dependency is required at runtime
+    def st_folium(*args, **kwargs):
+        raise ModuleNotFoundError("streamlit-folium is required to run this app")
 from google import genai
 
+
+def _get_json(url, headers=None, timeout=15):
+    request = Request(url, headers=headers or {})
+    with urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _post_json(url, form_data, timeout=15):
+    request = Request(
+        url,
+        data=form_data.encode("utf-8"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST"
+    )
+    with urlopen(request, timeout=timeout) as response:
+        return response.status, json.loads(response.read().decode("utf-8"))
+
+
+# =========================================================
+# PAGE CONFIG
+# =========================================================
+
 st.set_page_config(
-    page_title="YatraAI — Smart Tourism Companion",
-    page_icon="🧭",
-    layout="wide",
+    page_title="YatraAI - Smart Travel Companion",
+    page_icon="✈️",
+    layout="wide"
 )
 
-# -----------------------------
-# Config
-# -----------------------------
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL") or st.secrets.get(
-    "GEMINI_MODEL", "gemini-3.8-flash"
-)
 
-HEADERS = {
-    "User-Agent": "YatraAI-Hackathon/1.0 (tourism demo)"
-}
+# =========================================================
+# CUSTOM CSS
+# =========================================================
 
-# -----------------------------
-# Styling
-# -----------------------------
 st.markdown("""
 <style>
+
 .stApp {
-    background: #08111f;
-    color: #eef4ff;
+    background:
+        radial-gradient(
+            circle at 80% 0%,
+            #123b60 0%,
+            #07101f 35%
+        );
+
+    color: white;
 }
-.hero {
-    padding: 26px 28px;
-    border: 1px solid #263a55;
-    border-radius: 20px;
-    background: linear-gradient(135deg, #10243a, #0b1728);
-    margin-bottom: 18px;
+
+.main-title {
+    font-size: 65px;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: -3px;
 }
-.hero h1 { margin: 0; font-size: 42px; }
-.hero p { margin: 8px 0 0; color: #a9bbd4; font-size: 17px; }
+
+.gradient-text {
+    color: #5de1ff;
+}
+
+.subtitle {
+    color: #9cafc5;
+    font-size: 18px;
+    line-height: 1.7;
+}
+
 .card {
-    border: 1px solid #263a55;
-    border-radius: 16px;
-    padding: 16px;
-    background: #0d1a2b;
+    background: #0d1c2e;
+    border: 1px solid #29415c;
+    border-radius: 18px;
+    padding: 20px;
     margin-bottom: 12px;
 }
-.small { color: #a9bbd4; font-size: 13px; }
-.badge {
-    display: inline-block;
-    padding: 5px 10px;
-    border-radius: 999px;
-    background: #183a5e;
-    color: #d9ecff;
+
+.place-card {
+    background: #0c1a2b;
+    border: 1px solid #203850;
+    border-radius: 15px;
+    padding: 15px;
+    margin-bottom: 8px;
+}
+
+.small-text {
+    color: #8195ad;
     font-size: 12px;
 }
+
+.ai-box {
+    background:
+        linear-gradient(
+            135deg,
+            #102a40,
+            #0b1829
+        );
+
+    border: 1px solid #31516c;
+    border-radius: 20px;
+    padding: 25px;
+}
+
+.important {
+    color: #5de1ff;
+    font-weight: bold;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
-# -----------------------------
-# Helpers
-# -----------------------------
-@st.cache_data(ttl=3600, show_spinner=False)
-def geocode(place):
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {"q": place, "format": "json", "limit": 1}
-    r = requests.get(url, params=params, headers=HEADERS, timeout=15)
-    r.raise_for_status()
-    data = r.json()
-    if not data:
-        return None
-    return float(data[0]["lat"]), float(data[0]["lon"]), data[0]["display_name"]
 
-@st.cache_data(ttl=900, show_spinner=False)
-def nearby_places(lat, lon, radius=5000):
+# =========================================================
+# GEMINI SETUP
+# =========================================================
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if GEMINI_API_KEY:
+    client = genai.Client(
+        api_key=GEMINI_API_KEY
+    )
+else:
+    client = None
+
+
+# =========================================================
+# DEFAULT LOCATION
+# =========================================================
+
+DEFAULT_LAT = 23.0225
+DEFAULT_LON = 72.5714
+
+
+# =========================================================
+# DISTANCE
+# =========================================================
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    R = 6371
+    lat1 = math.radians(lat1)
+    lat2 = math.radians(lat2)
+    dlat = lat2 - lat1
+    dlon = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    )
+
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+# =========================================================
+# GEOCODING
+# =========================================================
+
+def search_location(query):
+    url = (
+        "https://nominatim.openstreetmap.org/search"
+        "?format=json"
+        "&limit=1"
+        f"&q={quote(query)}"
+    )
+
+    try:
+        data = _get_json(
+            url,
+            headers={"User-Agent": "YatraAI-Hackathon-App"},
+            timeout=15
+        )
+
+        if not data:
+            return None
+
+        return {
+            "lat": float(data[0]["lat"]),
+            "lon": float(data[0]["lon"]),
+            "name": data[0]["display_name"].split(",")[0]
+        }
+    except Exception:
+        return None
+
+
+# =========================================================
+# OVERPASS PLACES (WITH MULTIPLE FALLBACKS)
+# =========================================================
+
+def get_nearby_places(lat, lon):
     query = f"""
-    [out:json][timeout:25];
+    [out:json][timeout:30];
+
     (
-      nwr(around:{radius},{lat},{lon})["tourism"~"attraction|museum|gallery|viewpoint|zoo|theme_park"];
-      nwr(around:{radius},{lat},{lon})["historic"~"monument|castle|archaeological_site|memorial"];
-      nwr(around:{radius},{lat},{lon})["tourism"="hotel"];
-      nwr(around:{radius},{lat},{lon})["amenity"~"restaurant|cafe"];
-      nwr(around:{radius},{lat},{lon})["amenity"="hospital"];
-      nwr(around:{radius},{lat},{lon})["amenity"="police"];
-      nwr(around:{radius},{lat},{lon})["amenity"="fire_station"];
+        nwr(around:7000, {lat}, {lon})["tourism"~"attraction|museum|gallery|viewpoint|zoo|theme_park"];
+        nwr(around:7000, {lat}, {lon})["historic"~"monument|castle|archaeological_site|memorial"];
+        nwr(around:7000, {lat}, {lon})["tourism"="hotel"];
+        nwr(around:7000, {lat}, {lon})["amenity"~"restaurant|cafe"];
+        nwr(around:7000, {lat}, {lon})["amenity"~"hospital|police|fire_station"];
     );
+
     out center tags;
     """
-    r = requests.post(
+
+    OVERPASS_URLS = [
         "https://overpass-api.de/api/interpreter",
-        data=query,
-        headers=HEADERS,
-        timeout=45,
-    )
-    r.raise_for_status()
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter"
+    ]
 
-    rows = []
-    for x in r.json().get("elements", []):
-        tags = x.get("tags", {})
-        name = tags.get("name")
-        if not name:
+    data = {}
+    for url in OVERPASS_URLS:
+        try:
+            status, response_data = _post_json(
+                url, f"data={quote(query)}", timeout=15
+            )
+            if status == 200:
+                data = response_data
+                break
+        except Exception:
             continue
 
-        xlat = x.get("lat", x.get("center", {}).get("lat"))
-        xlon = x.get("lon", x.get("center", {}).get("lon"))
-        if xlat is None or xlon is None:
+    places = []
+
+    for item in data.get("elements", []):
+        tags = item.get("tags", {})
+        item_lat = item.get("lat")
+        item_lon = item.get("lon")
+
+        if item_lat is None:
+            center = item.get("center", {})
+            item_lat = center.get("lat")
+            item_lon = center.get("lon")
+
+        if item_lat is None or item_lon is None:
             continue
 
-        if tags.get("tourism") == "hotel":
-            category = "Hotel"
-        elif tags.get("amenity") == "restaurant":
-            category = "Restaurant"
-        elif tags.get("amenity") == "cafe":
-            category = "Cafe"
-        elif tags.get("amenity") == "hospital":
-            category = "Hospital"
-        elif tags.get("amenity") == "police":
-            category = "Police"
-        elif tags.get("amenity") == "fire_station":
-            category = "Fire Station"
-        elif tags.get("historic"):
-            category = "Historic Place"
+        tourism = tags.get("tourism")
+        amenity = tags.get("amenity")
+
+        if tourism == "hotel":
+            place_type = "hotel"
+        elif amenity in ["restaurant", "cafe"]:
+            place_type = "food"
+        elif amenity in ["hospital", "police", "fire_station"]:
+            place_type = "emergency"
         else:
-            category = "Tourist Attraction"
+            place_type = "attraction"
 
-        rows.append({
-            "name": name,
-            "category": category,
-            "lat": float(xlat),
-            "lon": float(xlon),
-        })
+        place = {
+            "name": tags.get("name", "Unnamed place"),
+            "type": place_type,
+            "lat": item_lat,
+            "lon": item_lon,
+            "distance": calculate_distance(lat, lon, item_lat, item_lon)
+        }
+        places.append(place)
 
-    # Remove duplicates while keeping the first occurrence.
-    seen = set()
-    unique = []
-    for row in rows:
-        key = (row["name"].lower(), round(row["lat"], 5), round(row["lon"], 5))
-        if key not in seen:
-            seen.add(key)
-            unique.append(row)
-    return unique
+    places.sort(key=lambda x: x["distance"])
+    return places
 
-@st.cache_data(ttl=900, show_spinner=False)
-def weather(lat, lon):
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m",
-        "timezone": "auto",
-    }
-    r = requests.get(url, params=params, timeout=15)
-    r.raise_for_status()
-    return r.json()
 
-def maps_url(lat, lon):
-    return f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}"
+# =========================================================
+# WEATHER
+# =========================================================
 
-def distance_km(lat1, lon1, lat2, lon2):
-    from math import radians, sin, cos, asin, sqrt
-    R = 6371.0
-    dlat = radians(lat2 - lat1)
-    dlon = radians(lon2 - lon1)
-    a = sin(dlat/2)**2 + cos(radians(lat1))*cos(radians(lat2))*sin(dlon/2)**2
-    return 2 * R * asin(sqrt(a))
+def get_weather(lat, lon):
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}"
+        f"&longitude={lon}"
+        "&current=temperature_2m,relative_humidity_2m,wind_speed_10m"
+    )
 
-def gemini_text(prompt):
-    if not GEMINI_API_KEY:
-        return None
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-        )
-        return response.text
-    except Exception as e:
-        return f"Gemini error: {e}"
+        data = _get_json(url, timeout=15)
+        return data.get("current")
+    except Exception:
+        return None
 
-def build_itinerary(place_name, budget, hours, interest, attractions, hotels, restaurants):
-    attractions_text = "\n".join(
-        f"- {x['name']} ({x['category']})"
-        for x in attractions[:18]
-    ) or "No attractions found."
 
-    restaurants_text = "\n".join(
-        f"- {x['name']} ({x['category']})"
-        for x in restaurants[:10]
-    ) or "No food places found."
+# =========================================================
+# GEMINI ITINERARY
+# =========================================================
 
-    hotels_text = "\n".join(
-        f"- {x['name']}"
-        for x in hotels[:10]
-    ) or "No hotels found."
+def generate_itinerary(destination, budget, hours, interest, places):
+    if not client:
+        return "Gemini API key not configured."
+
+    place_text = "\n".join(
+        [
+            f"{i+1}. {p['name']} | {p['type']} | {p['distance']:.1f} km"
+            for i, p in enumerate(places[:30])
+        ]
+    )
 
     prompt = f"""
-You are YatraAI, an AI tourism planner.
+You are YatraAI, an AI travel planner.
 
-Create a practical tourism itinerary for:
-Destination: {place_name}
-Budget: INR {budget}
+Destination: {destination}
+Budget: ₹{budget}
 Available time: {hours} hours
 Interest: {interest}
 
-Nearby attractions:
-{attractions_text}
+Nearby live places:
+{place_text}
 
-Nearby restaurants/cafes:
-{restaurants_text}
+Create a realistic travel itinerary.
 
-Nearby hotels:
-{hotels_text}
+Rules:
+1. Prefer places from the supplied list.
+2. Do not invent exact ticket prices.
+3. Do not invent hotel availability.
+4. Do not invent opening hours.
+5. Clearly mark estimates.
+6. Keep travel practical.
+7. Make the answer visually easy to read.
+8. Include estimated spending.
+9. Include travel tips.
 
-Requirements:
-1. Make a time-based itinerary from start to finish.
-2. Prioritize places matching the interest.
-3. Keep it realistic for the available time.
-4. Give estimated local travel time between stops.
-5. Mention approximate spending categories without inventing exact ticket prices.
-6. Suggest one food stop.
-7. Add a short budget breakdown.
-8. End with 3 smart travel tips.
-9. Keep the answer concise and presentation/demo friendly.
+Return:
+TITLE
+SUMMARY
+ITINERARY
+TIME:
+PLACE:
+ACTIVITY:
+ESTIMATED SPEND:
+TOTAL ESTIMATED COST
+TRAVEL TIPS
 """
-    return gemini_text(prompt)
 
-def ask_gemini(question, context):
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.7-flash",
+            contents=prompt
+        )
+        return response.text
+    except Exception as e:
+        return f"Gemini error: {str(e)}"
+
+
+# =========================================================
+# GEMINI CHAT
+# =========================================================
+
+def ask_gemini(question, destination, places):
+    if not client:
+        return "Please configure GEMINI_API_KEY."
+
+    place_text = ", ".join([p["name"] for p in places[:20]])
+
     prompt = f"""
 You are YatraAI, a helpful tourism assistant.
-Answer the user's question using the available local context below.
-Do not invent exact live prices, opening hours, availability, or distances.
-If data is missing, say so clearly.
 
-User question:
-{question}
+Destination: {destination}
+Nearby places: {place_text}
 
-Local context:
-{context}
+User question: {question}
+
+Give a concise, helpful answer.
+Do not invent live information.
 """
-    return gemini_text(prompt)
 
-# -----------------------------
-# Header
-# -----------------------------
-st.markdown("""
-<div class="hero">
-  <div class="badge">AI • MAPS • WEATHER • BUDGET • ITINERARY</div>
-  <h1>🧭 YatraAI</h1>
-  <p>One map. Every journey. Your AI-powered smart tourism companion.</p>
-</div>
-""", unsafe_allow_html=True)
-
-# -----------------------------
-# Sidebar
-# -----------------------------
-with st.sidebar:
-    st.header("⚙️ Trip Planner")
-    destination = st.text_input(
-        "Destination / City",
-        value="Ahmedabad, India",
-        placeholder="e.g. Jaipur, India",
-    )
-    budget = st.slider("Budget (₹)", 500, 100000, 5000, step=500)
-    hours = st.slider("Available time (hours)", 2, 24, 8)
-    interest = st.selectbox(
-        "What are you interested in?",
-        ["Heritage", "Nature", "Food", "Culture", "Family", "Photography", "Mixed"],
-    )
-    radius = st.slider("Search radius (km)", 1, 20, 5)
-
-    if st.button("🔎 Explore Destination", use_container_width=True):
-        st.session_state.pop("selected_destination", None)
-        st.session_state.pop("last_plan", None)
-        st.rerun()
-
-# -----------------------------
-# Location
-# -----------------------------
-with st.spinner("Finding your destination..."):
-    loc = geocode(destination)
-
-if not loc:
-    st.error("Destination not found. Try a city name such as Jaipur, Delhi, Ahmedabad, Goa, etc.")
-    st.stop()
-
-lat, lon, display_name = loc
-st.session_state["selected_destination"] = display_name
-
-with st.spinner("Finding nearby places..."):
-    places = nearby_places(lat, lon, radius * 1000)
-
-attractions = [x for x in places if x["category"] in ["Tourist Attraction", "Historic Place"]]
-hotels = [x for x in places if x["category"] == "Hotel"]
-restaurants = [x for x in places if x["category"] in ["Restaurant", "Cafe"]]
-emergency = [x for x in places if x["category"] in ["Hospital", "Police", "Fire Station"]]
-
-# -----------------------------
-# Metrics
-# -----------------------------
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("📍 Attractions", len(attractions))
-c2.metric("🏨 Hotels", len(hotels))
-c3.metric("🍽️ Food", len(restaurants))
-c4.metric("🚑 Emergency", len(emergency))
-
-# -----------------------------
-# Weather
-# -----------------------------
-try:
-    w = weather(lat, lon)
-    current = w.get("current", {})
-    st.info(
-        f"🌤️ Current weather: **{current.get('temperature_2m', '—')}°C**  •  "
-        f"Feels like **{current.get('apparent_temperature', '—')}°C**  •  "
-        f"Wind **{current.get('wind_speed_10m', '—')} km/h**"
-    )
-except Exception:
-    st.warning("Weather data is temporarily unavailable.")
-
-# -----------------------------
-# Map
-# -----------------------------
-st.subheader("🗺️ Explore on Map")
-
-m = folium.Map(location=[lat, lon], zoom_start=13, control_scale=True)
-folium.Marker(
-    [lat, lon],
-    tooltip="Your destination",
-    popup=display_name,
-    icon=folium.Icon(color="blue", icon="home"),
-).add_to(m)
-
-icons = {
-    "Tourist Attraction": ("green", "camera"),
-    "Historic Place": ("darkgreen", "university"),
-    "Hotel": ("purple", "bed"),
-    "Restaurant": ("orange", "cutlery"),
-    "Cafe": ("orange", "coffee"),
-    "Hospital": ("red", "plus"),
-    "Police": ("red", "shield"),
-    "Fire Station": ("red", "fire"),
-}
-
-for p in places[:150]:
-    color, icon = icons.get(p["category"], ("gray", "info-sign"))
-    popup = f"""
-    <b>{p['name']}</b><br>
-    {p['category']}<br><br>
-    <a href="{maps_url(p['lat'], p['lon'])}" target="_blank">Open directions ↗</a>
-    """
-    folium.Marker(
-        [p["lat"], p["lon"]],
-        tooltip=f"{p['name']} • {p['category']}",
-        popup=folium.Popup(popup, max_width=280),
-        icon=folium.Icon(color=color, icon=icon),
-    ).add_to(m)
-
-st_folium(m, width=None, height=520, returned_objects=[])
-
-# -----------------------------
-# Nearby lists
-# -----------------------------
-st.subheader("✨ Nearby Recommendations")
-
-tab1, tab2, tab3, tab4 = st.tabs(["🏛️ Attractions", "🏨 Hotels", "🍽️ Food", "🚨 Emergency"])
-
-def render_list(items, limit=10):
-    if not items:
-        st.info("No nearby places found in the selected radius.")
-        return
-    for p in items[:limit]:
-        d = distance_km(lat, lon, p["lat"], p["lon"])
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            st.markdown(
-                f"**{p['name']}**  \n"
-                f"<span class='small'>{p['category']} • {d:.1f} km away</span>",
-                unsafe_allow_html=True,
-            )
-        with col2:
-            st.link_button("Directions", maps_url(p["lat"], p["lon"]))
-
-with tab1:
-    render_list(attractions, 12)
-with tab2:
-    render_list(hotels, 12)
-with tab3:
-    render_list(restaurants, 12)
-with tab4:
-    render_list(emergency, 12)
-
-# -----------------------------
-# AI itinerary
-# -----------------------------
-st.subheader("🤖 AI Trip Planner")
-
-if st.button("✨ Generate My AI Itinerary", use_container_width=True):
-    with st.spinner("Gemini is creating your personalized itinerary..."):
-        plan = build_itinerary(
-            display_name,
-            budget,
-            hours,
-            interest,
-            attractions,
-            hotels,
-            restaurants,
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.7-flash",
+            contents=prompt
         )
-    if plan:
-        st.session_state["last_plan"] = plan
-    else:
-        st.session_state["last_plan"] = (
-            "Add your Gemini API key in Streamlit Secrets to enable the live AI itinerary."
-        )
+        return response.text
+    except Exception as e:
+        return str(e)
 
-if "last_plan" in st.session_state:
-    st.markdown(
-        f"<div class='card'>{st.session_state['last_plan'].replace(chr(10), '<br>')}</div>",
-        unsafe_allow_html=True,
-    )
 
-# -----------------------------
-# Chatbot
-# -----------------------------
-st.subheader("💬 Ask YatraAI")
+# =========================================================
+# SESSION STATE
+# =========================================================
 
-context_items = places[:80]
-context = "\n".join(
-    f"- {x['name']} | {x['category']} | {distance_km(lat, lon, x['lat'], x['lon']):.1f} km"
-    for x in context_items
-)
+if "location" not in st.session_state:
+    st.session_state.location = {
+        "lat": DEFAULT_LAT,
+        "lon": DEFAULT_LON,
+        "name": "Ahmedabad"
+    }
+
+if "places" not in st.session_state:
+    st.session_state.places = []
 
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
-for msg in st.session_state.chat:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
 
-question = st.chat_input("Ask: best places for 1 day? cheap food? heritage spots?")
-if question:
-    st.session_state.chat.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.markdown(question)
+# =========================================================
+# HEADER
+# =========================================================
 
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            answer = ask_gemini(question, context)
-        if not answer:
-            answer = "Add your Gemini API key in Streamlit Secrets to enable the AI chatbot."
-        st.markdown(answer)
-        st.session_state.chat.append({"role": "assistant", "content": answer})
-
-# -----------------------------
-# Footer
-# -----------------------------
-st.divider()
-st.caption(
-    "YatraAI hackathon demo • Map data: OpenStreetMap/Overpass • Weather: Open-Meteo • "
-    "AI: Google Gemini • Directions: Google Maps"
+st.markdown(
+    """
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+            <h2>✈️ Yatra<span style="color:#5de1ff">AI</span></h2>
+            <div class="small-text">AI SMART TRAVEL COMPANION</div>
+        </div>
+        <div>🟢 Live Travel Data</div>
+    </div>
+    """,
+    unsafe_allow_html=True
 )
+
+
+# =========================================================
+# HERO
+# =========================================================
+
+st.markdown(
+    """
+    <div style="padding-top:50px; padding-bottom:30px;">
+        <div class="eyebrow">AI • MAPS • DISCOVERY • PLANNING</div>
+        <div class="main-title">One map. <br><span class="gradient-text">Every journey.</span></div>
+        <p class="subtitle">
+            YatraAI understands your destination, budget, time and interests —
+            then turns nearby places into a personalized journey.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# =========================================================
+# SEARCH
+# =========================================================
+
+col1, col2 = st.columns([5, 1])
+
+with col1:
+    destination = st.text_input("🔎 Search destination", value=st.session_state.location["name"])
+
+with col2:
+    search_button = st.button("Explore", use_container_width=True)
+
+if search_button:
+    with st.spinner("Finding destination..."):
+        result = search_location(destination)
+
+    if result:
+        st.session_state.location = result
+        with st.spinner("Discovering nearby places..."):
+            st.session_state.places = get_nearby_places(result["lat"], result["lon"])
+    else:
+        st.error("Destination not found.")
+
+
+# =========================================================
+# WEATHER
+# =========================================================
+
+weather = get_weather(st.session_state.location["lat"], st.session_state.location["lon"])
+
+if weather:
+    w1, w2, w3 = st.columns(3)
+    w1.metric("🌡️ Temperature", f"{weather.get('temperature_2m')} °C")
+    w2.metric("💧 Humidity", f"{weather.get('relative_humidity_2m')}%")
+    w3.metric("💨 Wind", f"{weather.get('wind_speed_10m')} km/h")
+
+
+# =========================================================
+# CURRENT LOCATION
+# =========================================================
+
+st.info("📍 For current-location detection, allow location permission in your browser. Then search your current city/area.")
+
+
+# =========================================================
+# LOAD PLACES
+# =========================================================
+
+if not st.session_state.places:
+    with st.spinner("Loading nearby places..."):
+        st.session_state.places = get_nearby_places(
+            st.session_state.location["lat"],
+            st.session_state.location["lon"]
+        )
+
+places = st.session_state.places
+
+
+# =========================================================
+# STATS
+# =========================================================
+
+attractions = [p for p in places if p["type"] == "attraction"]
+hotels = [p for p in places if p["type"] == "hotel"]
+food = [p for p in places if p["type"] == "food"]
+emergency = [p for p in places if p["type"] == "emergency"]
+
+s1, s2, s3, s4 = st.columns(4)
+s1.metric("🏛️ Attractions", len(attractions))
+s2.metric("🏨 Hotels", len(hotels))
+s3.metric("🍽️ Food", len(food))
+s4.metric("🚨 Emergency", len(emergency))
+
+
+# =========================================================
+# FILTER
+# =========================================================
+
+st.subheader("Explore Near You")
+
+category = st.radio(
+    "Category",
+    ["All", "Attractions", "Hotels", "Food", "Emergency"],
+    horizontal=True
+)
+
+if category == "Attractions":
+    visible = attractions
+elif category == "Hotels":
+    visible = hotels
+elif category == "Food":
+    visible = food
+elif category == "Emergency":
+    visible = emergency
+else:
+    visible = places
+
+
+# =========================================================
+# MAP
+# =========================================================
+
+st.subheader("🗺️ Smart Travel Map")
+
+map_object = folium.Map(
+    location=[st.session_state.location["lat"], st.session_state.location["lon"]],
+    zoom_start=13
+)
+
+folium.Marker(
+    [st.session_state.location["lat"], st.session_state.location["lon"]],
+    tooltip="Your destination",
+    popup=st.session_state.location["name"],
+    icon=folium.Icon(color="blue", icon="user")
+).add_to(map_object)
+
+for place in visible[:100]:
+    if place["type"] == "hotel":
+        icon, color = "bed", "purple"
+    elif place["type"] == "food":
+        icon, color = "cutlery", "orange"
+    elif place["type"] == "emergency":
+        icon, color = "plus", "red"
+    else:
+        icon, color = "camera", "green"
+
+    popup = f"""
+    <b>{place['name']}</b><br>
+    📏 {place['distance']:.1f} km away<br><br>
+    <a href="https://www.google.com/maps/dir/?api=1&destination={place['lat']},{place['lon']}" target="_blank">
+    🧭 Get Directions
+    </a>
+    """
+
+    folium.Marker(
+        [place["lat"], place["lon"]],
+        tooltip=place["name"],
+        popup=folium.Popup(popup, max_width=300),
+        icon=folium.Icon(color=color, icon=icon)
+    ).add_to(map_object)
+
+st_folium(map_object, width="100%", height=560)
+
+
+# =========================================================
+# NEARBY PLACES
+# =========================================================
+
+st.subheader("📍 Nearby Recommendations")
+
+for place in visible[:12]:
+    col1, col2, col3 = st.columns([1, 6, 1])
+
+    with col1:
+        if place["type"] == "hotel":
+            st.write("🏨")
+        elif place["type"] == "food":
+            st.write("🍽️")
+        elif place["type"] == "emergency":
+            st.write("🚨")
+        else:
+            st.write("🏛️")
+
+    with col2:
+        st.markdown(
+            f"**{place['name']}**\n\n<span class='small-text'>{place['distance']:.1f} km • {place['type']}</span>",
+            unsafe_allow_html=True
+        )
+
+    with col3:
+        url = f"https://www.google.com/maps/dir/?api=1&destination={place['lat']},{place['lon']}"
+        st.link_button("🧭", url)
+
+
+# =========================================================
+# AI PLANNER
+# =========================================================
+
+st.divider()
+st.header("🤖 AI Smart Trip Planner")
+st.write("Tell YatraAI your budget, available time and travel interest. Gemini will create a personalized itinerary using the live nearby places.")
+
+p1, p2 = st.columns(2)
+with p1:
+    budget = st.slider("💰 Budget", 500, 20000, 3000, step=500)
+with p2:
+    hours = st.slider("⏱️ Available time", 2, 16, 8)
+
+interest = st.selectbox(
+    "🎯 What do you like?",
+    ["Culture & History", "Food & Local Life", "Nature & Relaxation", "Shopping & Markets", "Family & Fun"]
+)
+
+if st.button("✨ Generate AI Itinerary", use_container_width=True):
+    with st.spinner("Gemini is creating your journey..."):
+        result = generate_itinerary(st.session_state.location["name"], budget, hours, interest, places)
+
+    st.markdown(f'<div class="ai-box">{result.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+
+
+# =========================================================
+# AI CHATBOT
+# =========================================================
+
+st.divider()
+st.header("💬 Ask YatraAI")
+st.write("Ask anything about your trip.")
+
+question = st.text_input("Your question", placeholder="Example: I have ₹2000. What should I visit?")
+
+if st.button("Ask Gemini"):
+    if question:
+        with st.spinner("YatraAI is thinking..."):
+            answer = ask_gemini(question, st.session_state.location["name"], places)
+
+        st.session_state.chat.append({"question": question, "answer": answer})
+
+for item in reversed(st.session_state.chat):
+    st.markdown(
+        f"""
+        <div class="place-card">
+        <b>👤 You:</b> {item['question']}<br><br>
+        <b>🤖 YatraAI:</b> {item['answer']}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
