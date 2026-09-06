@@ -1,3 +1,49 @@
+import os
+
+try:
+    from groq import Groq  # pyright: ignore[reportMissingImports]
+except ImportError:  # pragma: no cover
+    Groq = None
+
+try:
+    from openai import OpenAI  # pyright: ignore[reportMissingImports]
+except ImportError:  # pragma: no cover
+    OpenAI = None
+
+def generate_travel_plan(prompt):
+    # --- OPTION 1: Gemini Try Karein ---
+    try:
+        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        print("Gemini failed, switching to Groq...", e)
+
+    # --- OPTION 2: Groq Try Karein (Fallback 1) ---
+    try:
+        if Groq is None:
+            raise ImportError("The optional 'groq' package is not installed")
+        groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+        completion = groq_client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        print("Groq failed, switching to OpenAI...", e)
+
+    # --- OPTION 3: OpenAI Try Karein (Fallback 2) ---
+    try:
+        openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print("All APIs failed...", e)
+        return "Sorry, unable to process request at the moment."
 import json
 import os
 import urllib.parse
