@@ -200,3 +200,53 @@ if st is not None and plan_btn:
 
 elif st is not None and not plan_btn:
     st.info("👈 Enter Source & Destination in the sidebar and click **Plan My Entire Trip**.")
+try:
+    from groq import Groq  # pyright: ignore[reportMissingImports]
+except ImportError:  # pragma: no cover
+    Groq = None  # type: ignore[assignment]
+
+
+def get_groq_api_key():
+    key = None
+    if st is not None:
+        try:
+            key = st.secrets.get("GROQ_API_KEY")
+        except Exception:
+            pass
+    if not key:
+        key = os.getenv("GROQ_API_KEY")
+    return key
+
+
+GROQ_API_KEY = get_groq_api_key()
+
+
+def generate_groq_itinerary(src="Punjab", dest="Goa", vehicle="4-Wheeler (Car/SUV)", fuel="Petrol", days=3):
+    if Groq is None:
+        return "⚠️ Groq package is not installed."
+    if not GROQ_API_KEY:
+        return "⚠️ GROQ_API_KEY is missing. Add it to Streamlit secrets or environment variables."
+
+    client = Groq(api_key=GROQ_API_KEY)
+    prompt = f"Create a {days}-day trip itinerary from {src} to {dest} by {vehicle.lower()} using {fuel.lower()}."
+
+    try:
+        completion = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
+                {"role": "system", "content": "You are an expert AI travel planner."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+            max_tokens=1024,
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+if st is not None and st.session_state.get("plan_btn"):
+    groq_result = generate_groq_itinerary()
+    if groq_result:
+        st.caption("Groq AI itinerary preview")
+        st.markdown(groq_result)    
