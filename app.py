@@ -1,57 +1,58 @@
-import os
 import json
+import os
 import urllib.parse
 import urllib.request
 
 try:
     import streamlit as st  # pyright: ignore[reportMissingImports]
-except ImportError:  # pragma: no cover - handled at runtime if dependency is missing
+except ImportError:  # pragma: no cover
     st = None  # type: ignore[assignment]
 
 try:
     import google.generativeai as genai  # pyright: ignore[reportMissingImports]
-except ImportError:  # pragma: no cover - handled at runtime if dependency is missing
+except ImportError:  # pragma: no cover
     genai = None  # type: ignore[assignment]
 
 import streamlit.components.v1 as components  # pyright: ignore[reportMissingImports]
 
-# Streamlit secrets se key fetch karein
-api_key = st.secrets.get("GEMINI_API_KEY") if st is not None else None
-
-if st is not None and not api_key:
-    st.error("⚠️ GEMINI_API_KEY missing in Streamlit Secrets!")
-elif st is not None:
-    genai.configure(api_key=api_key)
-
-# Secrets aur Environment Variables dono se key read karein
-GEMINI_API_KEY = (st.secrets.get("GEMINI_API_KEY") if st is not None else None) or os.getenv("GEMINI_API_KEY") or (st.secrets.get("GOOGLE_API_KEY", "") if st is not None else "")
-
 # Page Configuration
-st.set_page_config(
-    page_title="Yatra AI - Global Mobility, Beaches & Route Planner",
-    page_icon="🌍",
-    layout="wide"
-)
+if st is not None:
+    st.set_page_config(
+        page_title="Yatra AI - Global Mobility, Beaches & Route Planner",
+        page_icon="🌍",
+        layout="wide"
+    )
 
-# Render Environment Variable
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# Robust Secrets & Env Key Retrieval Logic
+def get_api_key():
+    key = None
+    if st is not None:
+        try:
+            key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+        except Exception:
+            pass
+    if not key:
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    return key
 
-st.title("🌍 Yatra AI - Global Mobility, Beaches & Route Planner")
-st.markdown("Automated ML Dynamic Cost Estimation, Live Map Detection, and AI-Driven Global Itinerary.")
+GEMINI_API_KEY = get_api_key()
 
-st.divider()
+if st is not None:
+    st.title("🌍 Yatra AI - Global Mobility, Beaches & Route Planner")
+    st.markdown("Automated ML Dynamic Cost Estimation, Live Map Detection, and AI-Driven Global Itinerary.")
+    st.divider()
 
-# Sidebar User Inputs
-st.sidebar.header("🗺️ Trip & Vehicle Configuration")
-source = st.sidebar.text_input("Source Location:", "Punjab")
-destination = st.sidebar.text_input("Destination Location:", "Goa")
-vehicle_type = st.sidebar.selectbox("Vehicle Type:", ["4-Wheeler (Car/SUV)", "2-Wheeler (Bike/Scooter)"])
-fuel_type = st.sidebar.selectbox("Fuel Type:", ["Petrol", "Diesel", "Electric (EV)"])
-num_days = st.sidebar.number_input("Trip Duration (Days):", min_value=1, max_value=30, value=3)
+    # Sidebar User Inputs
+    st.sidebar.header("🗺️ Trip & Vehicle Configuration")
+    source = st.sidebar.text_input("Source Location:", "Punjab")
+    destination = st.sidebar.text_input("Destination Location:", "Goa")
+    vehicle_type = st.sidebar.selectbox("Vehicle Type:", ["4-Wheeler (Car/SUV)", "2-Wheeler (Bike/Scooter)"])
+    fuel_type = st.sidebar.selectbox("Fuel Type:", ["Petrol", "Diesel", "Electric (EV)"])
+    num_days = st.sidebar.number_input("Trip Duration (Days):", min_value=1, max_value=30, value=3)
 
-plan_btn = st.sidebar.button("🚀 Plan My Entire Trip")
+    plan_btn = st.sidebar.button("🚀 Plan My Entire Trip")
 
-# 1. Real Coordinate-Based ML Distance & Cost Engine
+# 1. Real Coordinate-Based Distance Estimator
 def get_lat_lon(location_name):
     try:
         url = f"https://nominatim.openstreetmap.org/search?format=json&q={urllib.parse.quote(location_name)}"
@@ -71,7 +72,7 @@ def calculate_haversine_distance(lat1, lon1, lat2, lon2):
     dlon = math.radians(lon2 - lon1)
     a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return round(R * c * 1.3)  # 1.3 factor for real road curves
+    return round(R * c * 1.3)
 
 def ml_trip_estimator(src, dest, vehicle, fuel, days):
     lat1, lon1 = get_lat_lon(src)
@@ -80,7 +81,7 @@ def ml_trip_estimator(src, dest, vehicle, fuel, days):
     if lat1 and lat2:
         distance_est = calculate_haversine_distance(lat1, lon1, lat2, lon2)
     else:
-        distance_est = 1200  # Default fallback distance for global route
+        distance_est = 1200
     
     if "2-Wheeler" in vehicle:
         mileage = 45 if fuel == "Petrol" else 75
@@ -107,16 +108,19 @@ def ml_trip_estimator(src, dest, vehicle, fuel, days):
         "total_budget": total_budget
     }
 
-# 2. Dynamic Gemini AI Model Fetcher & Generator
+# 2. Updated Gemini AI Model Call
 def generate_ai_travel_data(src, dest, vehicle, fuel, days):
     if not GEMINI_API_KEY:
-        return "⚠️ API Key Missing! Please configure `GEMINI_API_KEY` in Render Environment Variables."
+        return "⚠️ API Key Missing! Please set `GEMINI_API_KEY` in Streamlit Cloud Secrets."
         
+    if genai is None:
+        return "⚠️ Google Generative AI module is not installed."
+
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         
-        # Priority fallback models to guarantee no 404
-        models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+        # Valid active models
+        models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro']
         
         prompt = f"""
         You are an advanced worldwide AI travel and road trip planner. 
@@ -157,15 +161,14 @@ def generate_ai_travel_data(src, dest, vehicle, fuel, days):
             except Exception:
                 continue
 
-        return "Error: Unable to connect to Gemini AI models. Please check your API key permissions."
+        return "Error: Unable to connect to Gemini AI models. Please verify API key and Google Cloud project settings."
 
     except Exception as e:
         return f"Error executing AI generation: {str(e)}"
 
-# Main Execution Flow
-if plan_btn:
+# Main Execution
+if st is not None and plan_btn:
     with st.spinner("⚡ Running Real-time Distance ML Engine & AI Route Detection..."):
-        # 1. Run Real ML Distance Estimator
         ml_data = ml_trip_estimator(source, destination, vehicle_type, fuel_type, num_days)
         
         st.subheader(f"📊 ML Predictive Analytics: {source} ➔ {destination}")
@@ -179,7 +182,7 @@ if plan_btn:
 
         st.divider()
 
-        # 2. Live Interactive World Route Map
+        # Map Embed
         st.subheader("🗺️ Live Route & Map Detection")
         embed_map_code = f"""
         <iframe width="100%" height="450" frameborder="0" scrolling="no" marginheight="0" marginwidth="0" 
@@ -190,10 +193,10 @@ if plan_btn:
 
         st.divider()
 
-        # 3. AI Generated Comprehensive Travel & Beach Guide
+        # AI Result
         st.subheader("🤖 Comprehensive AI Travel, Beach & Mobility Guide")
         ai_result = generate_ai_travel_data(source, destination, vehicle_type, fuel_type, num_days)
         st.markdown(ai_result)
 
-else:
+elif st is not None and not plan_btn:
     st.info("👈 Enter Source & Destination in the sidebar and click **Plan My Entire Trip**.")
