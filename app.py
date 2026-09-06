@@ -1,18 +1,30 @@
 import os
-import streamlit as st  # pyright: ignore[reportMissingImports]
+import json
+import urllib.parse
+import urllib.request
 
-# Secrets aur Environment Variables dono se key read karein
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY", "")
-import streamlit as st  # pyright: ignore[reportMissingImports]
+try:
+    import streamlit as st  # pyright: ignore[reportMissingImports]
+except ImportError:  # pragma: no cover - handled at runtime if dependency is missing
+    st = None  # type: ignore[assignment]
+
 try:
     import google.generativeai as genai  # pyright: ignore[reportMissingImports]
 except ImportError:  # pragma: no cover - handled at runtime if dependency is missing
     genai = None  # type: ignore[assignment]
-import os
+
 import streamlit.components.v1 as components  # pyright: ignore[reportMissingImports]
-import urllib.parse
-import json
-import urllib.request
+
+# Streamlit secrets se key fetch karein
+api_key = st.secrets.get("GEMINI_API_KEY") if st is not None else None
+
+if st is not None and not api_key:
+    st.error("⚠️ GEMINI_API_KEY missing in Streamlit Secrets!")
+elif st is not None:
+    genai.configure(api_key=api_key)
+
+# Secrets aur Environment Variables dono se key read karein
+GEMINI_API_KEY = (st.secrets.get("GEMINI_API_KEY") if st is not None else None) or os.getenv("GEMINI_API_KEY") or (st.secrets.get("GOOGLE_API_KEY", "") if st is not None else "")
 
 # Page Configuration
 st.set_page_config(
