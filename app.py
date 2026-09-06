@@ -198,4 +198,7 @@ def generate_ai_travel_data(src, dest, vehicle, fuel, days):
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"⚠️ **API Error Details:** {str(e)}"    
+        return f"⚠️ **API Error Details:** {str(e)}" 
+    # app.py ke except block ko aise badlein
+    except Exception as e:
+        return f"⚠️ **API Error Details:** {str(e)}"   
