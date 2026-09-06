@@ -249,4 +249,4 @@ if st is not None and st.session_state.get("plan_btn"):
     groq_result = generate_groq_itinerary()
     if groq_result:
         st.caption("Groq AI itinerary preview")
-        st.markdown(groq_result)    
+        st.markdown(groq_result)
