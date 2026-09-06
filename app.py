@@ -673,4 +673,22 @@ for item in reversed(st.session_state.chat):
         </div>
         """,
         unsafe_allow_html=True
-    )
+    )# app.py ke end me add karein
+app = st._main
+
+if __name__ == '__main__':
+    st._main()
+    {
+  "builds": [
+    {
+      "src": "app.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "app.py"
+    }
+  ]
+}
