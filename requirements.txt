@@ -1,7 +1,2 @@
 streamlit
-google-genai
-requests
-folium
-streamlit-folium
-streamlit
 google-generativeai
