@@ -30,7 +30,7 @@ search_btn = st.sidebar.button("🚀 Plan My Trip")
 def get_ai_travel_plan(source, dest, duration):
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         
         prompt = f"""
         Act as a expert travel guide. Create a structured travel plan from {source} to {dest} for {duration} days.
