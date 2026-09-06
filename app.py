@@ -145,3 +145,37 @@ if plan_btn:
 
 else:
     st.info("👈 Enter Source & Destination in the sidebar and click **Generate Full Route & Plan**.")
+# Gemini AI Dynamic Detailed Generator
+def generate_ai_travel_data(src, dest, vehicle, fuel, days):
+    if not GEMINI_API_KEY:
+        return "⚠️ API Key Missing! Please check GEMINI_API_KEY in Render Environment Variables."
+        
+    genai.configure(api_key=GEMINI_API_KEY)
+    
+    # Updated reliable model list
+    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+    
+    prompt = f"""
+    You are an advanced worldwide AI travel and road trip planner. 
+    Provide a detailed travel guide from {src} to {dest} for a {days}-day trip using a {vehicle} ({fuel}).
+
+    Format the response clearly with the following sections:
+    1. 🏨 **Recommended Hotels & Stays**: Top 3 budget to luxury hotels in/around {dest}.
+    2. 🏛️ **Top Tourist Places**: Must-visit places along the route and inside {dest}.
+    3. ⛽ **Petrol Pumps / Charging Stations**: Major fuel stations & EV charging hubs.
+    4. 🛣️ **Route & Road Conditions ({vehicle})**: Highway details, toll info, safety tips.
+    5. ⏳ **Time Breakdown & Sightseeing Schedule**: Daily plan.
+    6. 💰 **Estimated Budget Breakdown**: Detailed breakdown (Food, Sightseeing, Fuel, Stay).
+    """
+
+    last_error = ""
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            last_error = str(e)
+            continue
+            
+    return f"Error Details: {last_error}"
