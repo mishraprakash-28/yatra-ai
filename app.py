@@ -1,11 +1,17 @@
-import streamlit as st  # type: ignore
-import google.generativeai as genai  # type: ignore
+import streamlit as st  # pyright: ignore[reportMissingImports]
+try:
+    import google.generativeai as genai  # pyright: ignore[reportMissingImports]
+except ImportError:  # pragma: no cover - handled at runtime if dependency is missing
+    genai = None  # type: ignore[assignment]
 import os
-import streamlit.components.v1 as components  # type: ignore
+import streamlit.components.v1 as components  # pyright: ignore[reportMissingImports]
+import urllib.parse
+import json
+import urllib.request
 
 # Page Configuration
 st.set_page_config(
-    page_title="Yatra AI - World Travel, Route & Mobility Planner",
+    page_title="Yatra AI - Global Mobility, Beaches & Route Planner",
     page_icon="🌍",
     layout="wide"
 )
@@ -14,13 +20,13 @@ st.set_page_config(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 st.title("🌍 Yatra AI - Global Mobility, Beaches & Route Planner")
-st.markdown("Automated ML Cost Estimation, Live Map Detection, and AI-Driven Global Itinerary.")
+st.markdown("Automated ML Dynamic Cost Estimation, Live Map Detection, and AI-Driven Global Itinerary.")
 
 st.divider()
 
 # Sidebar User Inputs
 st.sidebar.header("🗺️ Trip & Vehicle Configuration")
-source = st.sidebar.text_input("Source Location:", "Delhi")
+source = st.sidebar.text_input("Source Location:", "Punjab")
 destination = st.sidebar.text_input("Destination Location:", "Goa")
 vehicle_type = st.sidebar.selectbox("Vehicle Type:", ["4-Wheeler (Car/SUV)", "2-Wheeler (Bike/Scooter)"])
 fuel_type = st.sidebar.selectbox("Fuel Type:", ["Petrol", "Diesel", "Electric (EV)"])
@@ -28,10 +34,36 @@ num_days = st.sidebar.number_input("Trip Duration (Days):", min_value=1, max_val
 
 plan_btn = st.sidebar.button("🚀 Plan My Entire Trip")
 
-# 1. Machine Learning Heuristic Cost & Time Predictor Engine
+# 1. Real Coordinate-Based ML Distance & Cost Engine
+def get_lat_lon(location_name):
+    try:
+        url = f"https://nominatim.openstreetmap.org/search?format=json&q={urllib.parse.quote(location_name)}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'YatraAIApp/1.0'})
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            if data:
+                return float(data[0]['lat']), float(data[0]['lon'])
+    except Exception:
+        pass
+    return None, None
+
+def calculate_haversine_distance(lat1, lon1, lat2, lon2):
+    import math
+    R = 6371  # Earth radius in KM
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return round(R * c * 1.3)  # 1.3 factor for real road curves
+
 def ml_trip_estimator(src, dest, vehicle, fuel, days):
-    # Simulated Heuristic ML Algorithm for dynamic distance, fuel, and time calculation
-    distance_est = max(60, (len(src) + len(dest)) * 30)
+    lat1, lon1 = get_lat_lon(src)
+    lat2, lon2 = get_lat_lon(dest)
+    
+    if lat1 and lat2:
+        distance_est = calculate_haversine_distance(lat1, lon1, lat2, lon2)
+    else:
+        distance_est = 1200  # Default fallback distance for global route
     
     if "2-Wheeler" in vehicle:
         mileage = 45 if fuel == "Petrol" else 75
@@ -40,7 +72,7 @@ def ml_trip_estimator(src, dest, vehicle, fuel, days):
     else:
         mileage = 14 if fuel == "Petrol" else 17 if fuel == "Diesel" else 6
         fuel_price = 102 if fuel == "Petrol" else 92 if fuel == "Diesel" else 15
-        avg_speed = 70
+        avg_speed = 65
         
     travel_hours = round(distance_est / avg_speed, 1)
     fuel_cost = round((distance_est / mileage) * fuel_price, 2)
@@ -48,7 +80,7 @@ def ml_trip_estimator(src, dest, vehicle, fuel, days):
     total_hotel = hotel_cost_per_day * days
     food_other_cost = 1000 * days
     
-    total_budget = fuel_cost + total_hotel + food_other_cost
+    total_budget = round(fuel_cost + total_hotel + food_other_cost, 2)
     
     return {
         "distance": distance_est,
@@ -58,7 +90,7 @@ def ml_trip_estimator(src, dest, vehicle, fuel, days):
         "total_budget": total_budget
     }
 
-# 2. Dynamic Safe Gemini AI Model Fetcher & Generator
+# 2. Dynamic Gemini AI Model Fetcher & Generator
 def generate_ai_travel_data(src, dest, vehicle, fuel, days):
     if not GEMINI_API_KEY:
         return "⚠️ API Key Missing! Please configure `GEMINI_API_KEY` in Render Environment Variables."
@@ -66,25 +98,8 @@ def generate_ai_travel_data(src, dest, vehicle, fuel, days):
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         
-        # Dynamically fetch available models to prevent 404 Model Errors
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        selected_model = None
-        # Preferred models priority list
-        preferred_list = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']
-        
-        for p in preferred_list:
-            if p in available_models:
-                selected_model = p
-                break
-                
-        if not selected_model and available_models:
-            selected_model = available_models[0]
-            
-        if not selected_model:
-            return "Error: No supported Gemini models found for this API Key."
-
-        model = genai.GenerativeModel(selected_model)
+        # Priority fallback models to guarantee no 404
+        models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
         
         prompt = f"""
         You are an advanced worldwide AI travel and road trip planner. 
@@ -93,12 +108,12 @@ def generate_ai_travel_data(src, dest, vehicle, fuel, days):
         Format the response with these exact markdown sections:
         
         1. 🏝️ **Famous Beaches & Coastal Attractions in/near {dest}**:
-           - Top 3-5 famous beaches in or near {dest} (if destination has no beaches, mention nearest beaches/lakefronts/waterfronts).
-           - Key highlights, water sports, sunset views, and best time to visit each beach.
+           - Top famous beaches or waterfronts in or near {dest}.
+           - Key highlights, water sports, sunset views, and best time to visit.
            
         2. 🏛️ **Top Tourist Places & Sightseeing**:
            - Must-visit attractions along the route and inside {dest}.
-           - Time needed to explore each spot.
+           - Recommended time to explore each spot.
 
         3. 🏨 **Recommended Hotels & Stays**:
            - Budget, Mid-range, and Luxury stay options near tourist spots/beaches in {dest}.
@@ -116,16 +131,24 @@ def generate_ai_travel_data(src, dest, vehicle, fuel, days):
            - Cost breakdown for Food, Stay, Fuel, Sightseeing, and Beach Activities.
         """
 
-        response = model.generate_content(prompt)
-        return response.text
+        for model_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                if response and response.text:
+                    return response.text
+            except Exception:
+                continue
+
+        return "Error: Unable to connect to Gemini AI models. Please check your API key permissions."
 
     except Exception as e:
         return f"Error executing AI generation: {str(e)}"
 
 # Main Execution Flow
 if plan_btn:
-    with st.spinner("⚡ Processing ML Algorithms & AI Route Detection..."):
-        # 1. Run ML Heuristic Estimator
+    with st.spinner("⚡ Running Real-time Distance ML Engine & AI Route Detection..."):
+        # 1. Run Real ML Distance Estimator
         ml_data = ml_trip_estimator(source, destination, vehicle_type, fuel_type, num_days)
         
         st.subheader(f"📊 ML Predictive Analytics: {source} ➔ {destination}")
@@ -135,7 +158,7 @@ if plan_btn:
         col2.metric("Drive Time", f"~{ml_data['travel_time']} hrs")
         col3.metric("Fuel Expense", f"₹{ml_data['fuel_cost']}")
         col4.metric("Stay Expense", f"₹{ml_data['hotel_cost']}")
-        col5.metric("Total Budget", f"₹{ml_data['total_budget']}", delta="ML Dynamic")
+        col5.metric("Total Budget", f"₹{ml_data['total_budget']}", delta="Dynamic ML")
 
         st.divider()
 
@@ -143,7 +166,7 @@ if plan_btn:
         st.subheader("🗺️ Live Route & Map Detection")
         embed_map_code = f"""
         <iframe width="100%" height="450" frameborder="0" scrolling="no" marginheight="0" marginwidth="0" 
-        src="https://maps.google.com/maps?saddr={source}&daddr={destination}&output=embed">
+        src="https://maps.google.com/maps?saddr={urllib.parse.quote(source)}&daddr={urllib.parse.quote(destination)}&output=embed">
         </iframe>
         """
         components.html(embed_map_code, height=470)
