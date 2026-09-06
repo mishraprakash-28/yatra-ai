@@ -1,6 +1,6 @@
 import os
-import streamlit as st
-import google.generativeai as genai
+import streamlit as st  # pyright: ignore[reportMissingImports]
+import google.generativeai as genai  # pyright: ignore[reportMissingImports]
 
 # Page Configuration
 st.set_page_config(
@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 # AI Setup - Secrets ya Input se key lega
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Header
 st.title("✈️ Yatra AI - Global Tourism & Travel Planner")
