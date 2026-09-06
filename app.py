@@ -1,60 +1,46 @@
-import importlib
-
-try:
-    st = importlib.import_module("streamlit")
-except ModuleNotFoundError as exc:
-    raise RuntimeError(
-        "Streamlit is required to run this app. Install it with: pip install streamlit"
-    ) from exc
-
-try:
-    genai = importlib.import_module("google.generativeai")
-except ModuleNotFoundError as exc:
-    raise RuntimeError(
-        "The Google Generative AI SDK is required to run this app. "
-        "Install it with: pip install google-generativeai"
-    ) from exc
+import streamlit as st  # type: ignore
+import google.generativeai as genai  # type: ignore
 import os
-components = importlib.import_module("streamlit.components.v1")
+import streamlit.components.v1 as components  # type: ignore
 
 # Page Configuration
 st.set_page_config(
-    page_title="Yatra AI - Smart Global Mobility & Travel Planner",
+    page_title="Yatra AI - World Travel, Route & Mobility Planner",
     page_icon="🌍",
     layout="wide"
 )
 
-# Render / System Environment Variables
+# Render Environment Variable
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-st.title("🌍 Yatra AI - Global Travel, Route & Cost Predictor")
-st.markdown("Dynamic AI & ML-Powered Travel Intelligence for Any Two Locations Worldwide.")
+st.title("🌍 Yatra AI - Global Mobility, Beaches & Route Planner")
+st.markdown("Automated ML Cost Estimation, Live Map Detection, and AI-Driven Global Itinerary.")
 
 st.divider()
 
-# Sidebar Inputs
-st.sidebar.header("🗺️ Route & Trip Options")
+# Sidebar User Inputs
+st.sidebar.header("🗺️ Trip & Vehicle Configuration")
 source = st.sidebar.text_input("Source Location:", "Delhi")
-destination = st.sidebar.text_input("Destination Location:", "Agra")
+destination = st.sidebar.text_input("Destination Location:", "Goa")
 vehicle_type = st.sidebar.selectbox("Vehicle Type:", ["4-Wheeler (Car/SUV)", "2-Wheeler (Bike/Scooter)"])
 fuel_type = st.sidebar.selectbox("Fuel Type:", ["Petrol", "Diesel", "Electric (EV)"])
-num_days = st.sidebar.number_input("Trip Duration (Days):", min_value=1, max_value=30, value=2)
+num_days = st.sidebar.number_input("Trip Duration (Days):", min_value=1, max_value=30, value=3)
 
-plan_btn = st.sidebar.button("🚀 Generate Full Route & Plan")
+plan_btn = st.sidebar.button("🚀 Plan My Entire Trip")
 
-# Machine Learning Cost & Time Predictor Algorithm
+# 1. Machine Learning Heuristic Cost & Time Predictor Engine
 def ml_trip_estimator(src, dest, vehicle, fuel, days):
-    # Simulated heuristic ML model for dynamic estimation
-    distance_est = max(50, (len(src) + len(dest)) * 25)  # Distance estimation heuristic
+    # Simulated Heuristic ML Algorithm for dynamic distance, fuel, and time calculation
+    distance_est = max(60, (len(src) + len(dest)) * 30)
     
     if "2-Wheeler" in vehicle:
-        mileage = 40 if fuel == "Petrol" else 80  # km per liter/kWh
-        fuel_price = 100 if fuel == "Petrol" else 15
-        avg_speed = 50  # km/h
+        mileage = 45 if fuel == "Petrol" else 75
+        fuel_price = 102 if fuel == "Petrol" else 15
+        avg_speed = 50
     else:
-        mileage = 15 if fuel == "Petrol" else 18 if fuel == "Diesel" else 6
-        fuel_price = 100 if fuel == "Petrol" else 90 if fuel == "Diesel" else 15
-        avg_speed = 70  # km/h
+        mileage = 14 if fuel == "Petrol" else 17 if fuel == "Diesel" else 6
+        fuel_price = 102 if fuel == "Petrol" else 92 if fuel == "Diesel" else 15
+        avg_speed = 70
         
     travel_hours = round(distance_est / avg_speed, 1)
     fuel_cost = round((distance_est / mileage) * fuel_price, 2)
@@ -72,63 +58,89 @@ def ml_trip_estimator(src, dest, vehicle, fuel, days):
         "total_budget": total_budget
     }
 
-# Gemini AI Dynamic Detailed Generator
+# 2. Dynamic Safe Gemini AI Model Fetcher & Generator
 def generate_ai_travel_data(src, dest, vehicle, fuel, days):
     if not GEMINI_API_KEY:
-        return "⚠️ Gemini API key missing in Render Environment Variables!"
+        return "⚠️ API Key Missing! Please configure `GEMINI_API_KEY` in Render Environment Variables."
         
-    genai.configure(api_key=GEMINI_API_KEY)
-    
-    # Auto-fallback mechanism to avoid 404 Model errors
-    models_to_try = ['gemini-1.5-flash', 'gemini-pro', 'gemini-1.5-pro']
-    
-    prompt = f"""
-    You are an advanced worldwide AI travel and road trip planner. 
-    Provide a detailed travel guide from {src} to {dest} for a {days}-day trip using a {vehicle} ({fuel}).
-
-    Format the response clearly with the following sections:
-    
-    1. 🏨 **Recommended Hotels & Stays**: Top 3 budget to luxury hotels in/around {dest} with estimated nightly rates.
-    2. 🏛️ **Top Tourist Places**: Must-visit places along the route and inside {dest} with time needed for each.
-    3. ⛽ **Petrol Pumps / Charging Stations**: Major fuel stations & EV charging hubs along the route.
-    4. 🛣️ **Route & Road Conditions ({vehicle})**: Highway details, toll info, safety tips for {vehicle}.
-    5. ⏳ **Time Breakdown & Sightseeing Schedule**: Hour-by-hour or day-by-day plan.
-    6. 💰 **Estimated Budget Breakdown**: Detailed breakdown (Food, Sightseeing, Fuel, Stay).
-    """
-
-    for model_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception:
-            continue
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        
+        # Dynamically fetch available models to prevent 404 Model Errors
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        selected_model = None
+        # Preferred models priority list
+        preferred_list = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']
+        
+        for p in preferred_list:
+            if p in available_models:
+                selected_model = p
+                break
+                
+        if not selected_model and available_models:
+            selected_model = available_models[0]
             
-    return "Error: Unable to fetch data from Gemini API models. Please check your API key."
+        if not selected_model:
+            return "Error: No supported Gemini models found for this API Key."
 
-# Main App Execution
+        model = genai.GenerativeModel(selected_model)
+        
+        prompt = f"""
+        You are an advanced worldwide AI travel and road trip planner. 
+        Create a detailed travel guide from {src} to {dest} for a {days}-day trip using a {vehicle} ({fuel}).
+
+        Format the response with these exact markdown sections:
+        
+        1. 🏝️ **Famous Beaches & Coastal Attractions in/near {dest}**:
+           - Top 3-5 famous beaches in or near {dest} (if destination has no beaches, mention nearest beaches/lakefronts/waterfronts).
+           - Key highlights, water sports, sunset views, and best time to visit each beach.
+           
+        2. 🏛️ **Top Tourist Places & Sightseeing**:
+           - Must-visit attractions along the route and inside {dest}.
+           - Time needed to explore each spot.
+
+        3. 🏨 **Recommended Hotels & Stays**:
+           - Budget, Mid-range, and Luxury stay options near tourist spots/beaches in {dest}.
+
+        4. ⛽ **Petrol Pumps & EV Charging Stations**:
+           - Key fuel stops & EV hubs along the route from {src} to {dest}.
+
+        5. 🛣️ **Route Info & Safety Guidelines ({vehicle})**:
+           - Highway conditions, toll estimates, and driving tips for {vehicle} ({fuel}).
+
+        6. ⏳ **Day-by-Day Detailed Itinerary**:
+           - Schedule breakdown for Morning, Afternoon, and Evening over {days} days.
+
+        7. 💰 **Estimated Budget Summary**:
+           - Cost breakdown for Food, Stay, Fuel, Sightseeing, and Beach Activities.
+        """
+
+        response = model.generate_content(prompt)
+        return response.text
+
+    except Exception as e:
+        return f"Error executing AI generation: {str(e)}"
+
+# Main Execution Flow
 if plan_btn:
-    with st.spinner("⚡ Running ML Models & AI Route Planner..."):
-        # 1. Fetch ML Estimates
+    with st.spinner("⚡ Processing ML Algorithms & AI Route Detection..."):
+        # 1. Run ML Heuristic Estimator
         ml_data = ml_trip_estimator(source, destination, vehicle_type, fuel_type, num_days)
         
-        # Display Quick ML Metrics
-        st.subheader(f"📊 ML Predictive Metrics: {source} ➔ {destination}")
+        st.subheader(f"📊 ML Predictive Analytics: {source} ➔ {destination}")
         col1, col2, col3, col4, col5 = st.columns(5)
         
         col1.metric("Est. Distance", f"~{ml_data['distance']} km")
         col2.metric("Drive Time", f"~{ml_data['travel_time']} hrs")
         col3.metric("Fuel Expense", f"₹{ml_data['fuel_cost']}")
         col4.metric("Stay Expense", f"₹{ml_data['hotel_cost']}")
-        col5.metric("Total Budget", f"₹{ml_data['total_budget']}", delta="ML Calculated")
+        col5.metric("Total Budget", f"₹{ml_data['total_budget']}", delta="ML Dynamic")
 
         st.divider()
 
-        # 2. Live Interactive Google Maps Integration
-        st.subheader("🗺️ Live Interactive Map & Route Detection")
-        map_url = f"https://www.google.com/maps/embed/v1/directions?key=YOUR_GOOGLE_MAPS_KEY&origin={source}&destination={destination}&mode=driving"
-        
-        # Embed Embed Map using Open-Street Route Search (Fallback URL for free viewing)
+        # 2. Live Interactive World Route Map
+        st.subheader("🗺️ Live Route & Map Detection")
         embed_map_code = f"""
         <iframe width="100%" height="450" frameborder="0" scrolling="no" marginheight="0" marginwidth="0" 
         src="https://maps.google.com/maps?saddr={source}&daddr={destination}&output=embed">
@@ -138,44 +150,10 @@ if plan_btn:
 
         st.divider()
 
-        # 3. AI Generated Comprehensive Guide
-        st.subheader("🤖 AI Travel & Mobility Guide")
+        # 3. AI Generated Comprehensive Travel & Beach Guide
+        st.subheader("🤖 Comprehensive AI Travel, Beach & Mobility Guide")
         ai_result = generate_ai_travel_data(source, destination, vehicle_type, fuel_type, num_days)
         st.markdown(ai_result)
 
 else:
-    st.info("👈 Enter Source & Destination in the sidebar and click **Generate Full Route & Plan**.")
-# Gemini AI Dynamic Detailed Generator
-def generate_ai_travel_data(src, dest, vehicle, fuel, days):
-    if not GEMINI_API_KEY:
-        return "⚠️ API Key Missing! Please check GEMINI_API_KEY in Render Environment Variables."
-        
-    genai.configure(api_key=GEMINI_API_KEY)
-    
-    # Updated reliable model list
-    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
-    
-    prompt = f"""
-    You are an advanced worldwide AI travel and road trip planner. 
-    Provide a detailed travel guide from {src} to {dest} for a {days}-day trip using a {vehicle} ({fuel}).
-
-    Format the response clearly with the following sections:
-    1. 🏨 **Recommended Hotels & Stays**: Top 3 budget to luxury hotels in/around {dest}.
-    2. 🏛️ **Top Tourist Places**: Must-visit places along the route and inside {dest}.
-    3. ⛽ **Petrol Pumps / Charging Stations**: Major fuel stations & EV charging hubs.
-    4. 🛣️ **Route & Road Conditions ({vehicle})**: Highway details, toll info, safety tips.
-    5. ⏳ **Time Breakdown & Sightseeing Schedule**: Daily plan.
-    6. 💰 **Estimated Budget Breakdown**: Detailed breakdown (Food, Sightseeing, Fuel, Stay).
-    """
-
-    last_error = ""
-    for model_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            last_error = str(e)
-            continue
-            
-    return f"Error Details: {last_error}"
+    st.info("👈 Enter Source & Destination in the sidebar and click **Plan My Entire Trip**.")
