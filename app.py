@@ -1,3 +1,8 @@
+import os
+import streamlit as st  # pyright: ignore[reportMissingImports]
+
+# Secrets aur Environment Variables dono se key read karein
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY", "")
 import streamlit as st  # pyright: ignore[reportMissingImports]
 try:
     import google.generativeai as genai  # pyright: ignore[reportMissingImports]
@@ -180,25 +185,3 @@ if plan_btn:
 
 else:
     st.info("👈 Enter Source & Destination in the sidebar and click **Plan My Entire Trip**.")
-# app.py ke is function ko exact isse replace karein
-def generate_ai_travel_data(src, dest, vehicle, fuel, days):
-    if not GEMINI_API_KEY:
-        return "⚠️ API Key Missing! Render Environment me GEMINI_API_KEY set karein."
-        
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        # Direct call to official working model
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        prompt = f"""
-        Act as a travel planner. Plan a {days}-day road trip from {src} to {dest} using {vehicle} ({fuel}).
-        Include: Famous Beaches/Waterfronts, Top Sightseeing Spots, Recommended Stays, Petrol/EV Stops, and Budget.
-        """
-        
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"⚠️ **API Error Details:** {str(e)}" 
-    # app.py ke except block ko aise badlein
-    except Exception as e:
-        return f"⚠️ **API Error Details:** {str(e)}"   
